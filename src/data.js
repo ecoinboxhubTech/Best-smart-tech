@@ -41,7 +41,7 @@ export const REVIEWS = [
 ];
 
 export const FAQ = [
-  { q: "How do I pay?", a: "Send your order on WhatsApp and we confirm stock, then share bank transfer details. Paystack and card payment are coming soon." },
+  { q: "How do I pay?", a: "Send your order on WhatsApp and we confirm stock, then share bank transfer details. You can also pay by card, bank transfer or USSD online with Paystack at checkout." },
   { q: "How long does delivery take?", a: "Lagos: 1–2 working days. Other states: 2–5 working days depending on your region." },
   { q: "Can I return an item?", a: "Yes. Report any faulty or wrong item within 48 hours of delivery and we will replace or refund it." },
   { q: "Do you sell wholesale?", a: "Yes. Message us on WhatsApp with the items and quantities for a bulk price." },

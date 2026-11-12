@@ -1,7 +1,10 @@
 import { useState, useMemo, useEffect, useRef } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { getProducts, getZones, createOrder, verifyOrder, errorMessage } from "./api.js";
+
 import { motion, AnimatePresence, MotionConfig, LayoutGroup, useScroll, useTransform } from "framer-motion";
 import {
-  STORE, ZONES, PRODUCTS, CATS, REVIEWS, FAQ, COUPONS, FREE_SHIPPING_AT, naira, off,
+  STORE, ZONES as ZONES0, PRODUCTS as PRODUCTS0, CATS, REVIEWS, FAQ, COUPONS, FREE_SHIPPING_AT, naira, off,
 } from "./data.js";
 
 /* ---------- tiny icon set ---------- */
@@ -75,6 +78,32 @@ const ANNOUNCE = [
 
 /* ---------- App ---------- */
 export default function App() {
+  const [returnRef, setReturnRef] = useState(null); // Paystack reference from ?reference=
+  const [payDialog, setPayDialog] = useState(false);
+  const productsQ = useQuery({ queryKey: ["products"], queryFn: () => getProducts() });
+  const zonesQ = useQuery({ queryKey: ["zones"], queryFn: getZones });
+  const verifyQ = useQuery({
+    queryKey: ["verify", returnRef],
+    queryFn: () => verifyOrder(returnRef),
+    enabled: !!returnRef,
+    retry: 2,
+  });
+  const apiProducts = productsQ.data?.length ? productsQ.data : null;
+  const apiZones = zonesQ.data?.length ? zonesQ.data : null;
+  const verifyStatus = String(verifyQ.data?.status ?? verifyQ.data?.order?.status ?? "").toLowerCase();
+  const isPaid = ["paid", "shipped", "delivered"].includes(verifyStatus);
+  const payment = !payDialog ? null
+    : verifyQ.isPending ? { state: "checking", ref: returnRef }
+    : verifyQ.isError ? { state: "failed", ref: returnRef, msg: errorMessage(verifyQ.error) }
+    : isPaid ? { state: "paid", ref: returnRef }
+    : { state: "failed", ref: returnRef, msg: "We could not confirm your payment yet." };
+  const setPayment = () => setPayDialog(false);
+  // Live data from the backend; the static data.js values are the fallback (and supply stock/badges).
+  const PRODUCTS = useMemo(
+    () => apiProducts ? apiProducts.map((p) => ({ stock: 99, ...PRODUCTS0.find((x) => x.id === p.id), ...p, image: p.image || PRODUCTS0.find((x) => x.id === p.id)?.image })) : PRODUCTS0,
+    [apiProducts]
+  );
+  const ZONES = apiZones || ZONES0;
   const [cat, setCat] = useState("All");
   const [q, setQ] = useState("");
   const [sort, setSort] = useState("featured");
@@ -84,7 +113,7 @@ export default function App() {
   const [open, setOpen] = useState(false);
   const [menu, setMenu] = useState(false);
   const [zone, setZone] = useState("lagos");
-  const [buyer, setBuyer] = useState({ name: "", phone: "", address: "" });
+  const [buyer, setBuyer] = useState({ name: "", email: "", phone: "", address: "" });
   const [coupon, setCoupon] = useState("");
   const [applied, setApplied] = useState(null);
   const [cmsg, setCmsg] = useState(null);
@@ -100,6 +129,15 @@ export default function App() {
   const [h, m, s] = useCountdown();
   const shopRef = useRef(null);
 
+  useEffect(() => {
+    // Returning from Paystack: the backend verifies the payment (see verifyQ above).
+    const ref = new URLSearchParams(window.location.search).get("reference");
+    if (ref) {
+      window.history.replaceState({}, "", window.location.pathname);
+      setReturnRef(ref);
+      setPayDialog(true);
+    }
+  }, []);
   useEffect(() => {
     const on = () => { setStuck(window.scrollY > 40); setShowTop(window.scrollY > 700); };
     on(); window.addEventListener("scroll", on, { passive: true });
@@ -167,18 +205,38 @@ export default function App() {
   };
 
   const ready = buyer.name.trim() && buyer.phone.trim() && buyer.address.trim();
-  const checkout = () => {
-    const msg = [
-      `New order for ${STORE.name}`, "",
+  const emailOk = /^\S+@\S+\.\S+$/.test(buyer.email.trim());
+  const payReady = ready && emailOk;
+
+  const orderMessage = (ref) => [
+      `New order for ${STORE.name}`, null, "",
       ...lines.map((l) => `${l.qty} x ${l.name} — ${naira(l.qty * l.price)}`), "",
       `Subtotal: ${naira(subtotal)}`,
       applied ? `Discount (${applied}): -${naira(discount)}` : null,
       `Delivery (${z.label}): ${shipping ? naira(shipping) : "FREE"}`,
       `Total: ${naira(total)}`, "",
-      `Name: ${buyer.name}`, `Phone: ${buyer.phone}`, `Address: ${buyer.address}`,
+      `Name: ${buyer.name}`, buyer.email.trim() ? `Email: ${buyer.email.trim()}` : null, `Phone: ${buyer.phone}`, `Address: ${buyer.address}`,
     ].filter((x) => x !== null).join("\n");
-    window.open(`https://wa.me/${STORE.whatsapp}?text=${encodeURIComponent(msg)}`, "_blank");
+  const sendWhatsApp = (ref) =>
+    window.open(`https://wa.me/${STORE.whatsapp}?text=${encodeURIComponent(orderMessage(ref))}`, "_blank");
+  const checkout = () => sendWhatsApp();
+
+  const orderM = useMutation({
+    mutationFn: createOrder,
+    onSuccess: (order) => { window.location.href = order.authorization_url; },
+    onError: (e) => setToast(errorMessage(e)),
+  });
+  const paying = orderM.isPending || orderM.isSuccess; // stays disabled while redirecting
+  const payWithPaystack = () => {
+    if (!payReady || paying) return;
+    orderM.mutate({
+      items: lines.map((l) => ({ product_id: l.id, qty: l.qty })),
+      zone_id: zone,
+      customer: { name: buyer.name.trim(), email: buyer.email.trim(), phone: buyer.phone.trim(), address: buyer.address.trim() },
+    });
   };
+
+  useEffect(() => { if (isPaid) setCart({}); }, [isPaid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const deal = [...PRODUCTS].sort((a, b) => off(b) - off(a))[0];
   const heroRef = useRef(null);
@@ -464,7 +522,7 @@ export default function App() {
           </div>
           <div>
             <b>We accept</b>
-            <div className="pay"><span>Bank transfer</span><span>Paystack soon</span><span>Pay on WhatsApp</span></div>
+            <div className="pay"><span>Bank transfer</span><span>Paystack</span><span>Pay on WhatsApp</span></div>
           </div>
         </div>
         <div className="legal">© 2026 Best Smartech Connections · {STORE.cac}</div>
@@ -560,12 +618,6 @@ export default function App() {
                       </AnimatePresence>
                     </ul>
 
-                    <div className="coupon">
-                      <input aria-label="Coupon code" placeholder="Coupon code" value={coupon} onChange={(e) => setCoupon(e.target.value)} />
-                      <button onClick={applyCoupon}>Apply</button>
-                    </div>
-                    {cmsg && <p className={"cmsg " + (cmsg.ok ? "ok" : "bad")}>{cmsg.t}</p>}
-
                     <div className="form">
                       <label>Delivery region
                         <select value={zone} onChange={(e) => setZone(e.target.value)}>
@@ -574,6 +626,9 @@ export default function App() {
                       </label>
                       <label>Full name
                         <input value={buyer.name} onChange={(e) => setBuyer({ ...buyer, name: e.target.value })} autoComplete="name" />
+                      </label>
+                      <label>Email (for your payment receipt)
+                        <input type="email" value={buyer.email} onChange={(e) => setBuyer({ ...buyer, email: e.target.value })} inputMode="email" autoComplete="email" />
                       </label>
                       <label>Phone number
                         <input value={buyer.phone} onChange={(e) => setBuyer({ ...buyer, phone: e.target.value })} inputMode="tel" autoComplete="tel" />
@@ -592,15 +647,34 @@ export default function App() {
                       <div className="save"><dt>You save</dt><dd>{naira(saved + discount)}</dd></div>
                       <div className="tot"><dt>Total</dt><dd>{naira(total)}</dd></div>
                     </dl>
-                    <motion.button whileTap={ready ? { scale: 0.98 } : {}} className="go" disabled={!ready} onClick={checkout}>
+                    {(
+                      <motion.button whileTap={payReady ? { scale: 0.98 } : {}} className="go pay-btn" disabled={!payReady || paying} onClick={payWithPaystack}>
+                        {paying ? "Opening Paystack…" : payReady ? `Pay ${naira(total)} with Paystack` : "Fill in your details and email to pay"}
+                      </motion.button>
+                    )}
+                    <motion.button whileTap={ready ? { scale: 0.98 } : {}} className="go alt" disabled={!ready} onClick={checkout}>
                       {ready ? "Send order on WhatsApp" : "Fill in your details to order"}
                     </motion.button>
-                    <p className="note">We confirm stock and payment details with you on WhatsApp.</p>
+                    <p className="note">Pay securely by card, bank transfer or USSD with Paystack, or order on WhatsApp and pay after we confirm.</p>
                   </div>
                 </>
               )}
             </motion.aside>
           </>
+        )}
+      </AnimatePresence>
+
+      {/* payment result */}
+      <AnimatePresence>
+        {payment && (
+          <motion.div className="scrim" style={{ display: "grid", placeItems: "center", zIndex: 90 }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <div role="dialog" aria-modal="true" style={{ background: "var(--bg, #fff)", color: "inherit", borderRadius: 16, padding: "1.5rem", maxWidth: 380, width: "90%", textAlign: "center" }}>
+              <h3 style={{ marginTop: 0 }}>{payment.state === "checking" ? "Confirming your payment…" : payment.state === "paid" ? "Payment received 🎉" : "Payment not confirmed"}</h3>
+              <p>{payment.state === "paid" ? "Thank you! We'll contact you on WhatsApp about delivery." : payment.state === "failed" ? payment.msg : "Please wait a moment."}</p>
+              <p className="note">Reference: {payment.ref}</p>
+              {payment.state !== "checking" && <button className="btn" onClick={() => setPayment(null)}>Close</button>}
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
 

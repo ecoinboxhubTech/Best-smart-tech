@@ -196,6 +196,8 @@ footer a.fl{display:block;color:#C8D6D0;text-decoration:none;margin:.3rem 0}foot
 .sum .save{color:var(--green)}.sum .tot{border-top:1px solid var(--ink);margin-top:.4rem;padding-top:.6rem;font-size:1.2rem;font-weight:800}
 .go{width:100%;background:var(--wa);color:#06281A;border:0;border-radius:12px;padding:.9rem;font-weight:700}
 .go:disabled{background:var(--line);color:var(--mute);cursor:not-allowed}
+.go.pay-btn{background:var(--accent,#0BA4DB);color:#fff;margin-bottom:.5rem}
+.go.alt:not(:disabled){background:transparent;color:inherit;border:1px solid var(--line)}
 .note{font-size:.78rem;color:var(--mute);text-align:center;margin:.5rem 0 0}
 
 /* quick view modal */
